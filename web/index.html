@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rock Paper Scissors - Gesture</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; background:#0b1020; color:#e8eefc; }
+      header { padding: 16px 20px; background:#0e1430; border-bottom:1px solid #1e2a5a; position: sticky; top:0; z-index:10; }
+      main { max-width: 1000px; margin: 0 auto; padding: 20px; }
+      .panel { background:#0e1430; border:1px solid #1e2a5a; border-radius: 12px; padding: 16px; }
+      .row { display:flex; gap:16px; align-items:center; }
+      .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .video-wrap { position:relative; width:100%; aspect-ratio: 4/3; border-radius: 12px; overflow:hidden; background:#050814; }
+      video { position:absolute; inset:0; width:100%; height:100%; object-fit: cover; transform: scaleX(-1); }
+      canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+      .hud { position:absolute; left:12px; top:12px; background:rgba(10,15,35,.65); border:1px solid #1e2a5a; padding:8px 10px; border-radius:10px; font-size:14px; }
+      .controls { display:flex; gap:10px; flex-wrap:wrap; }
+      button { background:#1a2a6c; color:#e8eefc; border:1px solid #2b3f91; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:600; }
+      button:hover { background:#20338a; }
+      .pill { display:inline-block; padding:4px 10px; border-radius:999px; border:1px solid #2b3f91; background:#0d163a; font-size:12px; }
+      .stat { background:#0d163a; border:1px solid #2b3f91; border-radius:10px; padding:10px; }
+      .big { font-size:36px; font-weight:800; letter-spacing:.5px; }
+      .muted { color:#a5b4fc; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="row" style="justify-content:space-between;">
+        <div><strong>Rock • Paper • Scissors</strong> <span class="pill">Gesture</span></div>
+        <div class="muted mono">Controls: R = reset • Q/ESC = quit stream</div>
+      </div>
+    </header>
+    <main>
+      <div id="root"></div>
+    </main>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
