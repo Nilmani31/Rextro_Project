@@ -7,14 +7,15 @@ import json
 import os
 import numpy as np
 from gesture_recognition import HandGestureDetector
-from utils import get_computer_choice, get_winner
+from utils import get_computer_choice, get_winner, GameManager
 
 # Shared state for HTTP streaming
 latest_jpeg = b""  # last encoded annotated frame
 state_lock = threading.Lock()
 HTTP_PORT = 5002
 
-# Game state (shared between capture loop and HTTP handlers)
+# Enhanced Game state with 3-round system
+game_manager = GameManager()
 armed = False  # set to True to start countdown via web button
 prev_time = 0.0
 countdown = 3
@@ -22,6 +23,7 @@ game_started = False
 user_choice = None
 computer_choice = None
 winner = None
+round_result = None
 
 class StreamHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # silence default logging
@@ -40,8 +42,9 @@ class StreamHandler(BaseHTTPRequestHandler):
             self._send_headers(200, "application/json")
             self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
         elif self.path == "/state":
-            global armed, countdown, game_started, user_choice, computer_choice, winner
+            global armed, countdown, game_started, user_choice, computer_choice, winner, round_result, game_manager
             with state_lock:
+                game_status = game_manager.get_game_status()
                 payload = {
                     "armed": armed,
                     "countdown": countdown,
@@ -49,11 +52,17 @@ class StreamHandler(BaseHTTPRequestHandler):
                     "user_choice": user_choice,
                     "computer_choice": computer_choice,
                     "winner": winner,
+                    "round_result": round_result,
+                    "game_status": game_status
                 }
             self._send_headers(200, "application/json")
             self.wfile.write(json.dumps(payload).encode("utf-8"))
         elif self.path == "/start":  # allow GET for simplicity
             self._handle_start()
+        elif self.path.startswith("/difficulty/"):
+            self._handle_difficulty()
+        elif self.path == "/reset":
+            self._handle_reset()
         elif self.path == "/frame":
             # Single JPEG for quick testing
             global latest_jpeg
@@ -89,12 +98,16 @@ class StreamHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/start":
             self._handle_start()
+        elif self.path.startswith("/difficulty/"):
+            self._handle_difficulty()
+        elif self.path == "/reset":
+            self._handle_reset()
         else:
             self._send_headers(404, "application/json")
             self.wfile.write(json.dumps({"error": "not found"}).encode("utf-8"))
 
     def _handle_start(self):
-        global armed, prev_time, countdown, game_started, user_choice, computer_choice, winner
+        global armed, prev_time, countdown, game_started, user_choice, computer_choice, winner, round_result
         with state_lock:
             armed = True
             prev_time = time.time()
@@ -103,6 +116,30 @@ class StreamHandler(BaseHTTPRequestHandler):
             user_choice = None
             computer_choice = None
             winner = None
+            round_result = None
+        self._send_headers(200, "application/json")
+        self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+    
+    def _handle_difficulty(self):
+        global game_manager
+        difficulty = self.path.split("/")[-1].capitalize()
+        with state_lock:
+            success = game_manager.set_difficulty(difficulty)
+        
+        self._send_headers(200, "application/json")
+        self.wfile.write(json.dumps({"success": success, "difficulty": difficulty}).encode("utf-8"))
+    
+    def _handle_reset(self):
+        global game_manager, armed, game_started, user_choice, computer_choice, winner, round_result
+        with state_lock:
+            game_manager.reset_game()
+            armed = False
+            game_started = False
+            user_choice = None
+            computer_choice = None
+            winner = None
+            round_result = None
+        
         self._send_headers(200, "application/json")
         self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
 
@@ -206,15 +243,27 @@ def main():
                 if countdown < 0:
                     game_started = True
                     user_choice = gesture
-                    computer_choice = get_computer_choice()
+                    computer_choice = game_manager.get_computer_choice()
+                    round_result = game_manager.play_round(user_choice, computer_choice)
                     winner = get_winner(user_choice, computer_choice)
         else:
-            cv2.putText(frame, f"You: {user_choice}", (50, 100),
+            # Display current round info
+            game_status = game_manager.get_game_status()
+            cv2.putText(frame, f"Level: {game_status['level']} | Round: {game_status['round']}/{game_status['max_rounds']}", 
+                        (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+            cv2.putText(frame, f"Score: {game_status['player_score']}-{game_status['computer_score']}", 
+                        (50, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+            cv2.putText(frame, f"You: {user_choice}", (50, 120),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
-            cv2.putText(frame, f"Computer: {computer_choice}", (50, 150),
+            cv2.putText(frame, f"Computer: {computer_choice}", (50, 160),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 2)
-            cv2.putText(frame, winner, (50, 220),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 0, 0), 3)
+            cv2.putText(frame, winner, (50, 200),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 2)
+            
+            # Show final game result if completed
+            if game_status['game_completed']:
+                cv2.putText(frame, game_status['game_winner'], (50, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
 
         # Encode current annotated frame for HTTP streaming
         encode_and_set(frame)
@@ -228,6 +277,13 @@ def main():
         key = cv2.waitKey(1) if show_window else -1
         if key == ord('r'):
             with state_lock:
+                if game_manager.game_completed:
+                    # Reset for new game
+                    game_manager.reset_game()
+                    user_choice = None
+                    computer_choice = None
+                    winner = None
+                    round_result = None
                 armed = True
                 countdown = 3
                 game_started = False
