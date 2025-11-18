@@ -24,6 +24,7 @@ user_choice = None
 computer_choice = None
 winner = None
 round_result = None
+waiting_for_next_round = False
 
 class StreamHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # silence default logging
@@ -64,7 +65,6 @@ class StreamHandler(BaseHTTPRequestHandler):
         elif self.path == "/reset":
             self._handle_reset()
         elif self.path == "/frame":
-            # Single JPEG for quick testing
             global latest_jpeg
             self._send_headers(200, "image/jpeg")
             self.wfile.write(latest_jpeg)
@@ -92,7 +92,7 @@ class StreamHandler(BaseHTTPRequestHandler):
             self._send_headers(404, "application/json")
             self.wfile.write(json.dumps({"error": "not found"}).encode("utf-8"))
 
-    def do_OPTIONS(self):  # CORS preflight support
+    def do_OPTIONS(self):
         self._send_headers(200)
 
     def do_POST(self):
@@ -173,11 +173,9 @@ def main():
         except Exception:
             pass
 
-    # Preload a placeholder so /video_feed has something immediately
     encode_and_set(make_placeholder())
 
     def open_camera():
-        # Prefer DirectShow on Windows; fallback to default
         cap_try = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if not cap_try.isOpened():
             cap_try.release()
@@ -187,7 +185,6 @@ def main():
     cap = open_camera()
     detector = HandGestureDetector()
     global prev_time, countdown, game_started, user_choice, computer_choice, winner, armed
-    # Initial idle state until user presses Start in web UI
     with state_lock:
         armed = False
         prev_time = time.time()
@@ -197,7 +194,6 @@ def main():
         computer_choice = None
         winner = None
 
-    # Start HTTP streaming server thread
     http_thread = threading.Thread(target=start_http_server, daemon=True)
     http_thread.start()
 
@@ -206,7 +202,7 @@ def main():
     while True:
         ret, frame = cap.read()
         if not ret:
-            # Attempt to re-open camera and serve placeholder
+            # Re-open camera and serve placeholder
             cap.release()
             cap = open_camera()
             placeholder = make_placeholder()
@@ -214,20 +210,16 @@ def main():
             if show_window:
                 try:
                     cv2.imshow("Rock Paper Scissors", placeholder)
+                    cv2.waitKey(1)
                 except Exception:
                     pass
             time.sleep(0.1)
-            key = cv2.waitKey(1) if show_window else -1
-            if key == 27 or key == ord('q'):
-                break
             continue
 
-        frame = cv2.flip(frame, 1)  # Mirror camera
+        frame = cv2.flip(frame, 1)
         frame, gesture = detector.detect(frame)
-
         h, w, _ = frame.shape
 
-        # Countdown before result (only when armed via web button)
         if not game_started:
             if not armed:
                 cv2.putText(frame, "Click Start in web UI to begin", (50, 100),
@@ -247,7 +239,6 @@ def main():
                     round_result = game_manager.play_round(user_choice, computer_choice)
                     winner = get_winner(user_choice, computer_choice)
         else:
-            # Display current round info
             game_status = game_manager.get_game_status()
             cv2.putText(frame, f"Level: {game_status['level']} | Round: {game_status['round']}/{game_status['max_rounds']}", 
                         (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
@@ -260,12 +251,16 @@ def main():
             cv2.putText(frame, winner, (50, 200),
                         cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 2)
             
-            # Show final game result if completed
             if game_status['game_completed']:
                 cv2.putText(frame, game_status['game_winner'], (50, 240),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 255), 3)
+                cv2.putText(frame, "Press 'R' to play again", (50, 280),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            else:
+                cv2.putText(frame, "Press ENTER for next round", (50, 240),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+                waiting_for_next_round = True
 
-        # Encode current annotated frame for HTTP streaming
         encode_and_set(frame)
 
         if show_window:
@@ -275,20 +270,26 @@ def main():
                 pass
 
         key = cv2.waitKey(1) if show_window else -1
-        if key == ord('r'):
+        if key == 13 and waiting_for_next_round:
             with state_lock:
-                if game_manager.game_completed:
-                    # Reset for new game
-                    game_manager.reset_game()
-                    user_choice = None
-                    computer_choice = None
-                    winner = None
-                    round_result = None
+                waiting_for_next_round = False
+                game_started = False
                 armed = True
+                countdown = 3
+                prev_time = time.time()
+        elif key == ord('r') or key == ord('R'):
+            with state_lock:
+                game_manager.reset_game()
+                user_choice = None
+                computer_choice = None
+                winner = None
+                round_result = None
+                waiting_for_next_round = False
+                armed = False
                 countdown = 3
                 game_started = False
                 prev_time = time.time()
-        elif key == 27 or key == ord('q'):  # ESC or 'q' to quit
+        elif key == 27 or key == ord('q'):
             break
 
     cap.release()
